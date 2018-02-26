@@ -3,7 +3,7 @@
   <component name="ProjectModuleManager">
     <modules>
       <module fileurl="file://$PROJECT_DIR$/.idea/modules/akka-learning.iml" filepath="$PROJECT_DIR$/.idea/modules/akka-learning.iml" />
-      <module fileurl="file://$PROJECT_DIR$/.idea/modules/hello-build.iml" filepath="$PROJECT_DIR$/.idea/modules/hello-build.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/modules/akka-learning-build.iml" filepath="$PROJECT_DIR$/.idea/modules/akka-learning-build.iml" />
     </modules>
   </component>
 </project>

@@ -43,7 +43,7 @@ class UserStorageFSM extends FSM[UserStorageFSM.State, UserStorageFSM.Data] with
       goto(Connected).using(EmptyData)
     case Event(_, _) =>
       stash()
-      stay using(EmptyData)
+      stay.using(EmptyData)
   }
 
   when(Connected) {
@@ -54,6 +54,8 @@ class UserStorageFSM extends FSM[UserStorageFSM.State, UserStorageFSM.Data] with
       println(s"UserStorage receive ${op} operation to do in user ${user}")
       stay().using(EmptyData)
   }
+
+  initialize()
 }
 
 object FiniteStateMachine extends App {
