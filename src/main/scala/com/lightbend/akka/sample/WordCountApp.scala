@@ -6,6 +6,7 @@ import akka.actor.{Actor, ActorLogging, ActorRef, ActorSystem, Props}
 import akka.http.scaladsl.{Http, HttpExt}
 import akka.http.scaladsl.model.{HttpRequest, HttpResponse}
 import akka.stream.ActorMaterializer
+import akka.util.ByteString
 import com.lightbend.akka.sample.WebPageCollector.Collect
 import com.lightbend.akka.sample.WordCuntMainActor.{Count, WebPageCountent}
 
@@ -26,7 +27,7 @@ object WordCountApp extends App {
 
 class WordCuntMainActor extends Actor with ActorLogging {
   implicit val system = context.system
-  implicit val materializer = ActorMaterializer()
+  //implicit val materializer = ActorMaterializer()
   implicit val executionContext = context.system.dispatcher
 
   override def receive: Receive =  {
@@ -36,7 +37,8 @@ class WordCuntMainActor extends Actor with ActorLogging {
       val webPageCollector: ActorRef = context.actorOf(WebPageCollector.props(Http())) // 2번째 방법 (권장 방법) , return Type "ActorRef"
       urls.foreach(url => webPageCollector ! Collect(url))
 
-    case WebPageCountent(content) => ???
+    case WebPageCountent(content) =>
+      println(content)
   }
 }
 
@@ -51,13 +53,28 @@ object WordCuntMainActor {
 }
 
 class WebPageCollector(http: HttpExt)(implicit ec: ExecutionContext) extends Actor with ActorLogging {
+  implicit val materializer = ActorMaterializer()
+
   override def receive: Receive = {
     case Collect(url) =>
+      println(s"$url - $sender")
+
+      val theSender = sender
       val resonseFuture: Future[HttpResponse] = http.singleRequest(HttpRequest(uri = url))
 
       resonseFuture
         .onComplete {
-          case Success(res) => println(s"$self - $res")
+          case Success(res) =>
+            res.entity.dataBytes
+               .runFold(ByteString(""))(_ ++ _)
+               .map(body => body.utf8String)
+               .onComplete({
+                 case Success(r) =>
+                   println(s"$url - $theSender")
+                   theSender ! WebPageCountent(r)
+                 case Failure(exception) =>
+                   println(s"failed $exception")
+               })
           case Failure(_) =>sys.error("something wrong")
         }
   }
