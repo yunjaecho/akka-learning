@@ -2,13 +2,16 @@ package com.lightbend.akka.sample
 
 
 
+import akka.actor.Actor.Receive
 import akka.actor.{Actor, ActorLogging, ActorRef, ActorSystem, Props}
 import akka.http.scaladsl.{Http, HttpExt}
 import akka.http.scaladsl.model.{HttpRequest, HttpResponse}
 import akka.stream.ActorMaterializer
 import akka.util.ByteString
 import com.lightbend.akka.sample.WebPageCollector.Collect
+import com.lightbend.akka.sample.WordCounter.CountedWords
 import com.lightbend.akka.sample.WordCuntMainActor.{Count, WebPageCountent}
+import org.jsoup.Jsoup
 
 import scala.concurrent.{ExecutionContext, Future}
 import scala.util.{Failure, Success}
@@ -21,7 +24,10 @@ object WordCountApp extends App {
 
   val wordCuntMainActor = system.actorOf(WordCuntMainActor.props)
 
-  wordCuntMainActor ! Count(List("https://www.naver.com", "https://www.daum.net"))
+  wordCuntMainActor ! Count(List(
+    "https://www.google.co.kr/search?q=akka",
+    "https://www.google.co.kr/search?q=scala",
+    "https://www.google.co.kr/search?q=play+framework"))
 
 }
 
@@ -37,8 +43,13 @@ class WordCuntMainActor extends Actor with ActorLogging {
       val webPageCollector: ActorRef = context.actorOf(WebPageCollector.props(Http())) // 2번째 방법 (권장 방법) , return Type "ActorRef"
       urls.foreach(url => webPageCollector ! Collect(url))
 
-    case WebPageCountent(content) =>
-      println(content)
+    case WebPageCountent(html) =>
+      //println(s"WebPageContent $html")
+      val doc = Jsoup.parse(html)
+      val content = doc.body().text()
+      val wordCounter = context.actorOf(WordCounter.props)
+      wordCounter ! WordCounter.Count(content)
+
   }
 }
 
@@ -87,8 +98,62 @@ object WebPageCollector {
   def props(http: HttpExt)(implicit ec: ExecutionContext): Props = Props(new WebPageCollector(http))
 }
 
+
+object WordCounter {
+  sealed trait Command
+  case class Count(content: String) extends Command
+
+  sealed trait Result
+  case class CountedWords(wordAndCount: Map[String, Int])
+
+  def props = Props(new WordCounter)
+}
+
 class WordCounter extends Actor with ActorLogging {
   override def receive: Receive = {
-    case Count(content) => ???
+    case WordCounter.Count(content) =>
+      val wordCountingWorker = context.actorOf(WordCountingWorker.props)
+      wordCountingWorker ! Count(content.split("[\\s]+").toList)
   }
+}
+
+/**
+  *  words.groupBy(x => x) is same words.groupBy(identity)
+  */
+class WordCountingWorker extends Actor with ActorLogging {
+  import scala.collection.mutable
+
+  // 1. 외부에 노출시 데이터가 불변 이므로 변경불가능(안전)
+  private var map = Map[String, Int]()
+
+  // 2. 외부에 노출시 데이터가 불변이 아니므로 변경가능함(불불안)
+  //private val map = mutable.Map[String, Int]()
+
+
+
+  override def receive: Receive = {
+    case Count(words) => {
+      for(word <- words) {
+        val count = map.get(word).fold(1)(_ +1)
+        map += word -> count
+      }
+
+      sender() ! CountedWords(map)
+      map = Map[String, Int]()
+
+
+      //val wordCount = words.groupBy(x => x).mapValues(_.size)
+      //println(wordCount)
+      //println(words.groupBy(identity).map(t => (t._1, t._2.size)).toList)
+      //println(words.groupBy(identity).map{case (word, list) => (word, list)}.toList)
+    }
+  }
+}
+
+object WordCountingWorker {
+  sealed trait Command
+
+  case class Count(words: List[String]) extends Command
+
+  def props = Props(new WordCountingWorker())
 }
