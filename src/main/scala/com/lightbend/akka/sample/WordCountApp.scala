@@ -168,15 +168,15 @@ class WordCountingWorker extends Actor with ActorLogging {
       * word count extract from body text
       */
     case WordCountingWorker.Count(url, words) => {
-      for(word <- words) {
-        val count = map.get(word).fold(1)(_ +1)
+      for (word <- words) {
+        val count = map.get(word).fold(1)(_ + 1)
         map += word -> count
       }
 
       sender() ! WordCounter.CountedWords(url, map)
       map = Map[String, Int]()
-
-      case WordCounter.CountedWords(url, wordAndCount) => ???
+    }
+    case WordCounter.CountedWords(url, wordAndCount) => ???
 
 
       //val wordCount = words.groupBy(x => x).mapValues(_.size)
