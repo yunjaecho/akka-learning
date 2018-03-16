@@ -2,7 +2,6 @@ package com.lightbend.akka.sample
 
 
 
-import akka.actor.Actor.Receive
 import akka.actor.{Actor, ActorLogging, ActorRef, ActorSystem, Props}
 import akka.http.scaladsl.{Http, HttpExt}
 import akka.http.scaladsl.model.{HttpRequest, HttpResponse}
@@ -17,7 +16,7 @@ import scala.concurrent.{ExecutionContext, Future}
 import scala.util.{Failure, Success}
 
 /**
-  * Created by USER on 2018-02-26.
+  * Main entry point
   */
 object WordCountApp extends App {
   val system = ActorSystem("wordCuntApp")
@@ -31,7 +30,13 @@ object WordCountApp extends App {
 
 }
 
+/**
+  * Main Actor class
+  * 해당 url에 대한 word count 처리
+  */
 class WordCuntMainActor extends Actor with ActorLogging {
+  import WordCuntMainActor._
+
   implicit val system = context.system
   //implicit val materializer = ActorMaterializer()
   implicit val executionContext = context.system.dispatcher
@@ -43,12 +48,23 @@ class WordCuntMainActor extends Actor with ActorLogging {
       val webPageCollector: ActorRef = context.actorOf(WebPageCollector.props(Http())) // 2번째 방법 (권장 방법) , return Type "ActorRef"
       urls.foreach(url => webPageCollector ! Collect(url))
 
-    case WebPageCountent(html) =>
-      //println(s"WebPageContent $html")
+    /**
+      * html parse
+       */
+    case WebPageCountent(url, html) =>
       val doc = Jsoup.parse(html)
       val content = doc.body().text()
       val wordCounter = context.actorOf(WordCounter.props)
-      wordCounter ! WordCounter.Count(content)
+      wordCounter ! WordCounter.Count(url, content)
+    case WordCountResult(url, wordToCounter) =>
+      log.info(
+      s"""
+         |=============================
+         |wordToCounter @ $url
+         |   ${wordToCounter.mkString(",")}
+         |=============================
+       """.stripMargin
+      )
 
   }
 }
@@ -58,7 +74,9 @@ object WordCuntMainActor {
   case class Count(urls: List[String]) extends Command
 
   sealed trait Result
-  case class WebPageCountent(content: String) extends Result
+  case class WebPageCountent(url: String, content: String) extends Result
+
+  case class WordCountResult(url: String, wordToCounter: Map[String, Int])
 
   def props: Props = Props(new WordCuntMainActor())
 }
@@ -68,9 +86,9 @@ class WebPageCollector(http: HttpExt)(implicit ec: ExecutionContext) extends Act
 
   override def receive: Receive = {
     case Collect(url) =>
-      println(s"$url - $sender")
+      log.info(s"$url - $sender")
 
-      val theSender = sender
+      val theSender = sender // context 틀려 임시 저장해서 사용
       val resonseFuture: Future[HttpResponse] = http.singleRequest(HttpRequest(uri = url))
 
       resonseFuture
@@ -80,11 +98,11 @@ class WebPageCollector(http: HttpExt)(implicit ec: ExecutionContext) extends Act
                .runFold(ByteString(""))(_ ++ _)
                .map(body => body.utf8String)
                .onComplete({
-                 case Success(r) =>
-                   println(s"$url - $theSender")
-                   theSender ! WebPageCountent(r)
+                 case Success(content) =>
+                   // sender 에서 다시 보내 주기
+                   theSender ! WebPageCountent(url, content)
                  case Failure(exception) =>
-                   println(s"failed $exception")
+                   log.info(s"failed $exception")
                })
           case Failure(_) =>sys.error("something wrong")
         }
@@ -101,19 +119,35 @@ object WebPageCollector {
 
 object WordCounter {
   sealed trait Command
-  case class Count(content: String) extends Command
+  case class Count(url: String, content: String) extends Command
 
   sealed trait Result
-  case class CountedWords(wordAndCount: Map[String, Int])
+  case class CountedWords(url: String, wordAndCount: Map[String, Int]) extends Result
 
   def props = Props(new WordCounter)
 }
 
 class WordCounter extends Actor with ActorLogging {
+
+  private var sent = Map[String, ActorRef]()
+
   override def receive: Receive = {
-    case WordCounter.Count(content) =>
+    case WordCounter.Count(url, content) =>
       val wordCountingWorker = context.actorOf(WordCountingWorker.props)
-      wordCountingWorker ! Count(content.split("[\\s]+").toList)
+      val words = content.split("[\\s]+").toList
+      wordCountingWorker ! WordCountingWorker.Count(url, words)
+      sent += url -> sender()
+    case CountedWords(url, wordAndCount) =>
+      log.info(s"I get $wordAndCount")
+      sent.get(url) match {
+        case Some(requester) =>
+          requester ! WordCuntMainActor.WordCountResult(url,wordAndCount)
+          sent -= url
+        case None =>
+          log.error(s"There is not requester for the URL: $url")
+      }
+    case _ =>
+      log.info("Unknown data")
   }
 }
 
@@ -121,8 +155,6 @@ class WordCounter extends Actor with ActorLogging {
   *  words.groupBy(x => x) is same words.groupBy(identity)
   */
 class WordCountingWorker extends Actor with ActorLogging {
-  import scala.collection.mutable
-
   // 1. 외부에 노출시 데이터가 불변 이므로 변경불가능(안전)
   private var map = Map[String, Int]()
 
@@ -132,14 +164,19 @@ class WordCountingWorker extends Actor with ActorLogging {
 
 
   override def receive: Receive = {
-    case Count(words) => {
+    /**
+      * word count extract from body text
+      */
+    case WordCountingWorker.Count(url, words) => {
       for(word <- words) {
         val count = map.get(word).fold(1)(_ +1)
         map += word -> count
       }
 
-      sender() ! CountedWords(map)
+      sender() ! WordCounter.CountedWords(url, map)
       map = Map[String, Int]()
+
+      case WordCounter.CountedWords(url, wordAndCount) => ???
 
 
       //val wordCount = words.groupBy(x => x).mapValues(_.size)
@@ -153,7 +190,7 @@ class WordCountingWorker extends Actor with ActorLogging {
 object WordCountingWorker {
   sealed trait Command
 
-  case class Count(words: List[String]) extends Command
+  case class Count(url: String, words: List[String]) extends Command
 
   def props = Props(new WordCountingWorker())
 }
